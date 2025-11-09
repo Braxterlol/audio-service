@@ -17,6 +17,9 @@ from src.exercises.infrastructure.data.postgres_exercise_repository import (
 from src.exercises.infrastructure.data.mongo_reference_features_repository import (
     MongoReferenceFeaturesRepository
 )
+from src.audio_processing.infrastructure.data.user_progress_repository import (
+    UserProgressRepository
+)
 
 # Importar casos de uso
 from src.exercises.application.use_cases.get_exercises_use_case import (
@@ -30,6 +33,9 @@ from src.exercises.application.use_cases.get_reference_features_use_case import 
     GetReferenceFeaturesUseCase,
     GetReferenceFeaturesForComparisonUseCase
 )
+from src.exercises.application.use_cases.get_available_exercises_use_case import (
+    GetAvailableExercisesUseCase
+)
 
 # Importar controladores
 from src.exercises.infrastructure.controllers.exercise_controller import (
@@ -42,7 +48,6 @@ from src.exercises.infrastructure.controllers.exercise_controller import (
 # DATABASE CONNECTIONS
 # ========================================
 # Estos serán inyectados desde la app principal
-# Por ahora, definimos placeholders que deben ser configurados
 
 _postgres_pool: asyncpg.Pool = None
 _mongo_client: AsyncIOMotorClient = None
@@ -91,25 +96,22 @@ async def get_mongo_client() -> AsyncIOMotorClient:
 async def get_exercise_repository(
     db_pool: asyncpg.Pool = Depends(get_postgres_pool)
 ) -> PostgresExerciseRepository:
-    """
-    Proporciona una instancia del repositorio de ejercicios.
-    
-    Returns:
-        PostgresExerciseRepository: Repositorio de ejercicios
-    """
+    """Proporciona una instancia del repositorio de ejercicios."""
     return PostgresExerciseRepository(db_pool)
 
 
 async def get_reference_features_repository(
     mongo_client: AsyncIOMotorClient = Depends(get_mongo_client)
 ) -> MongoReferenceFeaturesRepository:
-    """
-    Proporciona una instancia del repositorio de features de referencia.
-    
-    Returns:
-        MongoReferenceFeaturesRepository: Repositorio de features
-    """
+    """Proporciona una instancia del repositorio de features de referencia."""
     return MongoReferenceFeaturesRepository(mongo_client)
+
+
+async def get_user_progress_repository(
+    db_pool: asyncpg.Pool = Depends(get_postgres_pool)
+) -> UserProgressRepository:
+    """Proporciona una instancia del repositorio de progreso de usuarios."""
+    return UserProgressRepository(db_pool)
 
 
 # ========================================
@@ -152,6 +154,14 @@ async def get_features_for_comparison_use_case(
     return GetReferenceFeaturesForComparisonUseCase(features_repo)
 
 
+async def get_available_exercises_use_case(
+    exercise_repo = Depends(get_exercise_repository),
+    progress_repo = Depends(get_user_progress_repository)
+) -> GetAvailableExercisesUseCase:
+    """Proporciona el caso de uso GetAvailableExercises"""
+    return GetAvailableExercisesUseCase(exercise_repo, progress_repo)
+
+
 # ========================================
 # CONTROLLER DEPENDENCIES
 # ========================================
@@ -161,20 +171,19 @@ async def get_exercise_controller(
     get_by_id_uc = Depends(get_exercise_by_id_use_case),
     get_details_uc = Depends(get_exercise_details_use_case),
     get_features_uc = Depends(get_reference_features_use_case),
-    get_features_comparison_uc = Depends(get_features_for_comparison_use_case)
+    get_features_comparison_uc = Depends(get_features_for_comparison_use_case),
+    get_available_exercises_uc = Depends(get_available_exercises_use_case),
+    progress_repo = Depends(get_user_progress_repository)
 ) -> ExerciseController:
-    """
-    Proporciona una instancia del controlador de ejercicios.
-    
-    Returns:
-        ExerciseController: Controlador configurado con todos los casos de uso
-    """
+    """Proporciona una instancia del controlador de ejercicios."""
     return ExerciseController(
         get_exercises_use_case=get_exercises_uc,
         get_exercise_by_id_use_case=get_by_id_uc,
         get_exercise_details_use_case=get_details_uc,
         get_reference_features_use_case=get_features_uc,
-        get_features_for_comparison_use_case=get_features_comparison_uc
+        get_features_for_comparison_use_case=get_features_comparison_uc,
+        get_available_exercises_use_case=get_available_exercises_uc,
+        user_progress_repository=progress_repo
     )
 
 
@@ -182,12 +191,7 @@ async def get_health_controller(
     exercise_repo = Depends(get_exercise_repository),
     features_repo = Depends(get_reference_features_repository)
 ) -> ExerciseHealthController:
-    """
-    Proporciona una instancia del controlador de salud.
-    
-    Returns:
-        ExerciseHealthController: Controlador de salud
-    """
+    """Proporciona una instancia del controlador de salud."""
     return ExerciseHealthController(
         exercise_repository=exercise_repo,
         reference_features_repository=features_repo
@@ -222,4 +226,3 @@ async def cleanup_connections():
     if _mongo_client:
         _mongo_client.close()
         _mongo_client = None
-
