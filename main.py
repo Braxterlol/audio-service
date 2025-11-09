@@ -16,12 +16,20 @@ from src.db import postgres_db, mongo_db
 # Importar módulo de ejercicios
 from src.exercises.infrastructure import (
     exercises_router,
-    health_router,
-    set_postgres_pool,
-    set_mongo_client,
-    initialize_repositories
+    health_router as exercises_health_router,
+    set_postgres_pool as exercises_set_postgres_pool,
+    set_mongo_client as exercises_set_mongo_client,
+    initialize_repositories as exercises_initialize_repositories
 )
 
+# Importar módulo de audio_processing
+from src.audio_processing.infrastructure import (
+    audio_processing_router,
+    attempt_router,
+    audio_set_postgres_pool as audio_set_postgres_pool,
+    audio_set_mongo_client as audio_set_mongo_client,
+    audio_initialize_repositories as audio_initialize_repositories
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,19 +54,30 @@ async def lifespan(app: FastAPI):
         
         # Configurar módulo de ejercicios
         print("\n🔧 Configurando módulo de ejercicios...")
-        set_postgres_pool(postgres_db.get_pool())
-        set_mongo_client(mongo_db.get_client())
+        exercises_set_postgres_pool(postgres_db.get_pool())
+        exercises_set_mongo_client(mongo_db.get_client())
         
-        # Inicializar repositorios (crear índices)
-        print("\n🔧 Inicializando repositorios...")
-        await initialize_repositories()
+        # Inicializar repositorios de ejercicios
+        print("  📊 Inicializando repositorios de ejercicios...")
+        await exercises_initialize_repositories()
+        
+        # Configurar módulo de audio_processing
+        print("\n🔧 Configurando módulo de audio_processing...")
+        audio_set_postgres_pool(postgres_db.get_pool())
+        audio_set_mongo_client(mongo_db.get_client())
+        
+        # Inicializar repositorios de audio_processing
+        print("  📊 Inicializando repositorios de audio_processing...")
+        await audio_initialize_repositories()
         
         print("\n" + "="*50)
         print("✨ Aplicación iniciada correctamente")
         print("="*50)
-        print(f"\n📚 Documentación: http://localhost:8000/docs")
-        print(f"🔍 Health check: http://localhost:8000/health")
-        print(f"💪 Ejercicios: http://localhost:8000/api/v1/exercises\n")
+        print(f"\n📚 Documentación: http://localhost:{settings.PORT}/docs")
+        print(f"🔍 Health check: http://localhost:{settings.PORT}/health")
+        print(f"💪 Ejercicios: http://localhost:{settings.PORT}/api/v1/exercises")
+        print(f"🎤 Audio Processing: http://localhost:{settings.PORT}/api/v1/audio")
+        print(f"📊 Attempts: http://localhost:{settings.PORT}/api/v1/attempts\n")
         
     except Exception as e:
         print(f"\n❌ Error al iniciar la aplicación: {e}")
@@ -126,7 +145,10 @@ async def root():
             "health": "/health",
             "exercises": "/api/v1/exercises",
             "exercises_health": "/api/v1/exercises/health",
-            "statistics": "/api/v1/exercises/statistics"
+            "statistics": "/api/v1/exercises/statistics",
+            "audio_processing": "/api/v1/audio",
+            "attempts": "/api/v1/attempts",
+            "progress": "/api/v1/attempts/progress/summary"
         }
     }
 
@@ -148,14 +170,32 @@ async def health():
     }
 
 
-# Incluir routers del módulo de ejercicios
+# ========================================
+# INCLUIR ROUTERS - EXERCISES
+# ========================================
+
 app.include_router(
     exercises_router,
     prefix="/api/v1"
 )
 
 app.include_router(
-    health_router,
+    exercises_health_router,
+    prefix="/api/v1"
+)
+
+
+# ========================================
+# INCLUIR ROUTERS - AUDIO PROCESSING
+# ========================================
+
+app.include_router(
+    audio_processing_router,
+    prefix="/api/v1"
+)
+
+app.include_router(
+    attempt_router,
     prefix="/api/v1"
 )
 
@@ -169,9 +209,8 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=settings.HOST,
+        port=settings.PORT,
         reload=settings.DEBUG,
         log_level="info"
     )
-

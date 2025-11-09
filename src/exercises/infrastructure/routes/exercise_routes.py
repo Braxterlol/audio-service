@@ -5,7 +5,7 @@ Define los endpoints HTTP y conecta con los controladores.
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from src.exercises.infrastructure.controllers.exercise_controller import (
     ExerciseController,
     ExerciseHealthController
@@ -14,6 +14,8 @@ from src.exercises.infrastructure.helpers.dependencies import (
     get_exercise_controller,
     get_health_controller
 )
+from src.exercises.domain.models.exercise import ExerciseCategory
+from src.shared.auth_dependency import get_current_user
 
 
 # Router para ejercicios
@@ -61,29 +63,7 @@ async def get_exercises(
     ),
     controller: ExerciseController = Depends(get_exercise_controller)
 ):
-    """
-    Obtiene una lista paginada de ejercicios.
-    
-    **Filtros disponibles:**
-    - category: fonema, ritmo, entonacion
-    - subcategory: r_suave, r_fuerte, pregunta, etc.
-    - difficulty_level: 1 (muy fácil) a 5 (muy difícil)
-    - is_active: true/false
-    
-    **Paginación:**
-    - limit: máximo 100 resultados por página
-    - offset: desplazamiento para paginación
-    
-    **Respuesta:**
-    ```json
-    {
-        "exercises": [...],
-        "total": 45,
-        "limit": 50,
-        "offset": 0
-    }
-    ```
-    """
+    """Obtiene una lista paginada de ejercicios."""
     return await controller.get_exercises(
         category=category,
         subcategory=subcategory,
@@ -92,6 +72,102 @@ async def get_exercises(
         limit=limit,
         offset=offset
     )
+
+
+@exercises_router.get(
+    "/available",
+    summary="Obtener ejercicios disponibles según progreso del usuario",
+    description="""
+    Retorna los ejercicios disponibles para el usuario según su progreso.
+    
+    Lógica de desbloqueo:
+    - Al iniciar, solo el primer ejercicio de cada categoría está desbloqueado
+    - Al completar un ejercicio (score ≥ 70), se desbloquea el siguiente
+    - Los ejercicios completados permanecen disponibles para reintento
+    
+    Estados posibles:
+    - **locked**: Bloqueado, no disponible aún
+    - **unlocked**: Desbloqueado, listo para intentar
+    - **in_progress**: Comenzado pero no completado
+    - **completed**: Completado con score aprobatorio (≥ 70)
+    - **mastered**: Dominado (score ≥ 95)
+    """,
+    response_description="Lista de ejercicios con estado de progreso",
+    status_code=200
+)
+async def get_available_exercises(
+    category: Optional[str] = Query(
+        None,
+        description="Filtrar por categoría (fonemas, ritmo, entonacion)"
+    ),
+    include_locked: bool = Query(
+        False,
+        description="Incluir ejercicios bloqueados en la respuesta"
+    ),
+    current_user: dict = Depends(get_current_user),
+    controller: ExerciseController = Depends(get_exercise_controller)
+):
+    """
+    Endpoint: Obtener ejercicios disponibles.
+    
+    Args:
+        category: Filtrar por categoría
+        include_locked: Incluir ejercicios bloqueados
+        current_user: Usuario autenticado
+        controller: Controller con use cases
+    
+    Returns:
+        Lista de ejercicios con progreso
+    """
+    user_id = current_user["user_id"]
+    
+    # Convertir category string a enum si viene
+    category_enum = None
+    if category:
+        try:
+            category_enum = ExerciseCategory(category.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Categoría inválida: {category}. Valores válidos: fonemas, ritmo, entonacion"
+            )
+    
+    return await controller.get_available_exercises(
+        user_id=user_id,
+        category=category_enum,
+        include_locked=include_locked
+    )
+
+
+@exercises_router.post(
+    "/initialize-progress",
+    summary="Inicializar progreso de un nuevo usuario",
+    description="""
+    Inicializa el progreso de un usuario desbloqueando el primer ejercicio
+    de cada categoría.
+    
+    Este endpoint se llama automáticamente la primera vez que el usuario
+    accede a /available, pero también puede llamarse manualmente si es necesario.
+    """,
+    status_code=200
+)
+async def initialize_user_progress(
+    current_user: dict = Depends(get_current_user),
+    controller: ExerciseController = Depends(get_exercise_controller)
+):
+    """
+    Endpoint: Inicializar progreso del usuario.
+    
+    Args:
+        current_user: Usuario autenticado
+        controller: Controller
+    
+    Returns:
+        Lista de ejercicios desbloqueados
+    """
+    user_id = current_user["user_id"]
+    
+    return await controller.initialize_user_progress(user_id)
 
 
 @exercises_router.get(
@@ -104,28 +180,7 @@ async def get_exercise_by_id(
     exercise_id: str,
     controller: ExerciseController = Depends(get_exercise_controller)
 ):
-    """
-    Obtiene un ejercicio específico.
-    
-    **Parámetros:**
-    - exercise_id: UUID o exercise_id (ej: "fonema_r_suave_1")
-    
-    **Respuesta:**
-    ```json
-    {
-        "found": true,
-        "exercise": {
-            "id": "...",
-            "exercise_id": "fonema_r_suave_1",
-            "category": "fonema",
-            "subcategory": "r_suave",
-            "text_content": "raro",
-            "difficulty_level": 2,
-            ...
-        }
-    }
-    ```
-    """
+    """Obtiene un ejercicio específico."""
     return await controller.get_exercise_by_id(exercise_id)
 
 
@@ -139,31 +194,7 @@ async def get_exercise_details(
     exercise_id: str,
     controller: ExerciseController = Depends(get_exercise_controller)
 ):
-    """
-    Obtiene detalles completos de un ejercicio.
-    
-    Incluye:
-    - Datos completos del ejercicio
-    - Ejercicios relacionados (misma subcategoría)
-    - Rango de duración esperada
-    - Metadata adicional
-    
-    **Respuesta:**
-    ```json
-    {
-        "id": "...",
-        "exercise_id": "fonema_r_suave_1",
-        ...
-        "related_exercises": [...],
-        "expected_duration_range": [0.5, 2.0],
-        "metadata": {
-            "is_phoneme_exercise": true,
-            "has_target_phonemes": true,
-            ...
-        }
-    }
-    ```
-    """
+    """Obtiene detalles completos de un ejercicio."""
     return await controller.get_exercise_details(exercise_id)
 
 
@@ -177,32 +208,7 @@ async def get_reference_features(
     exercise_id: str,
     controller: ExerciseController = Depends(get_exercise_controller)
 ):
-    """
-    Obtiene features precalculadas del audio de referencia.
-    
-    Incluye:
-    - Estadísticas de MFCCs
-    - Estadísticas prosódicas (F0, jitter, shimmer)
-    - Segmentos fonéticos
-    - Parámetros de normalización
-    - Umbrales de comparación
-    
-    **Respuesta:**
-    ```json
-    {
-        "found": true,
-        "exercise_exists": true,
-        "features": {
-            "exercise_id": "fonema_r_suave_1",
-            "mfcc_stats": {...},
-            "prosody_stats": {...},
-            "phoneme_segments": [...],
-            "duration_seconds": 1.5,
-            ...
-        }
-    }
-    ```
-    """
+    """Obtiene features precalculadas del audio de referencia."""
     return await controller.get_reference_features(exercise_id)
 
 
@@ -216,37 +222,7 @@ async def get_features_for_comparison(
     exercise_id: str,
     controller: ExerciseController = Depends(get_exercise_controller)
 ):
-    """
-    Obtiene features optimizadas para comparación DTW.
-    
-    Retorna un payload reducido con solo las features esenciales:
-    - Estadísticas de MFCCs (mean, std)
-    - Estadísticas prosódicas básicas
-    - Parámetros de normalización
-    - Umbrales de comparación
-    
-    Este endpoint es más rápido y usa menos ancho de banda que
-    el endpoint completo de features.
-    
-    **Respuesta:**
-    ```json
-    {
-        "exercise_id": "fonema_r_suave_1",
-        "mfcc_stats": {
-            "mean": [...],
-            "std": [...]
-        },
-        "prosody_stats": {
-            "f0_mean": 120.5,
-            "f0_std": 15.2,
-            "f0_range": 80.0
-        },
-        "duration_seconds": 1.5,
-        "normalization_params": {...},
-        "thresholds": {...}
-    }
-    ```
-    """
+    """Obtiene features optimizadas para comparación DTW."""
     return await controller.get_features_for_comparison(exercise_id)
 
 
@@ -266,19 +242,7 @@ health_router = APIRouter(
 async def health_check(
     controller: ExerciseHealthController = Depends(get_health_controller)
 ):
-    """
-    Verifica el estado de salud del módulo de ejercicios.
-    
-    **Respuesta:**
-    ```json
-    {
-        "status": "healthy",
-        "exercises_count": 45,
-        "cached_features_count": 42,
-        "cache_coverage": "93.3%"
-    }
-    ```
-    """
+    """Verifica el estado de salud del módulo de ejercicios."""
     return await controller.health_check()
 
 
@@ -291,23 +255,7 @@ async def health_check(
 async def get_statistics(
     controller: ExerciseHealthController = Depends(get_health_controller)
 ):
-    """
-    Obtiene estadísticas del módulo de ejercicios.
-    
-    **Respuesta:**
-    ```json
-    {
-        "total_exercises": 45,
-        "exercises_by_category": {
-            "fonema": 20,
-            "ritmo": 15,
-            "entonacion": 10
-        },
-        "cached_features": 42,
-        "cache_coverage_percentage": 93.33
-    }
-    ```
-    """
+    """Obtiene estadísticas del módulo de ejercicios."""
     return await controller.get_statistics()
 
 
@@ -316,4 +264,3 @@ __all__ = [
     "exercises_router",
     "health_router"
 ]
-

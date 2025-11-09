@@ -1,18 +1,13 @@
 """
 ExerciseController - Controlador para manejar requests HTTP relacionados con ejercicios.
-
-Responsabilidades:
-- Validar parámetros HTTP
-- Invocar casos de uso
-- Formatear respuestas HTTP
 """
 
 from typing import Optional
 from fastapi import HTTPException, status
+from src.exercises.domain.models.exercise import ExerciseCategory
 from src.exercises.application.use_cases.get_exercises_use_case import (
     GetExercisesUseCase,
-    GetExercisesRequest,
-    GetExercisesResponse
+    GetExercisesRequest
 )
 from src.exercises.application.use_cases.get_exercise_by_id_use_case import (
     GetExerciseByIdUseCase,
@@ -23,6 +18,13 @@ from src.exercises.application.use_cases.get_reference_features_use_case import 
     GetReferenceFeaturesUseCase,
     GetReferenceFeaturesRequest,
     GetReferenceFeaturesForComparisonUseCase
+)
+from src.exercises.application.use_cases.get_available_exercises_use_case import (
+    GetAvailableExercisesUseCase,
+    GetAvailableExercisesRequest
+)
+from src.audio_processing.infrastructure.data.user_progress_repository import (
+    UserProgressRepository
 )
 
 
@@ -39,13 +41,17 @@ class ExerciseController:
         get_exercise_by_id_use_case: GetExerciseByIdUseCase,
         get_exercise_details_use_case: GetExerciseDetailsUseCase,
         get_reference_features_use_case: GetReferenceFeaturesUseCase,
-        get_features_for_comparison_use_case: GetReferenceFeaturesForComparisonUseCase
+        get_features_for_comparison_use_case: GetReferenceFeaturesForComparisonUseCase,
+        get_available_exercises_use_case: GetAvailableExercisesUseCase,
+        user_progress_repository: UserProgressRepository
     ):
         self.get_exercises_use_case = get_exercises_use_case
         self.get_exercise_by_id_use_case = get_exercise_by_id_use_case
         self.get_exercise_details_use_case = get_exercise_details_use_case
         self.get_reference_features_use_case = get_reference_features_use_case
         self.get_features_for_comparison_use_case = get_features_for_comparison_use_case
+        self.get_available_exercises_use_case = get_available_exercises_use_case
+        self.user_progress_repository = user_progress_repository
     
     async def get_exercises(
         self,
@@ -56,23 +62,7 @@ class ExerciseController:
         limit: int = 50,
         offset: int = 0
     ) -> dict:
-        """
-        Obtiene lista de ejercicios con filtros.
-        
-        Args:
-            category: Categoría opcional
-            subcategory: Subcategoría opcional
-            difficulty_level: Nivel de dificultad opcional
-            is_active: Filtrar activos/inactivos
-            limit: Límite de resultados
-            offset: Offset para paginación
-        
-        Returns:
-            dict: Respuesta con ejercicios y metadata
-        
-        Raises:
-            HTTPException: Si hay errores de validación
-        """
+        """Obtiene lista de ejercicios con filtros."""
         try:
             request = GetExercisesRequest(
                 category=category,
@@ -99,18 +89,7 @@ class ExerciseController:
             )
     
     async def get_exercise_by_id(self, exercise_id: str) -> dict:
-        """
-        Obtiene un ejercicio específico por ID.
-        
-        Args:
-            exercise_id: ID del ejercicio (UUID o exercise_id)
-        
-        Returns:
-            dict: Datos del ejercicio
-        
-        Raises:
-            HTTPException: Si no se encuentra o hay error
-        """
+        """Obtiene un ejercicio específico por ID."""
         try:
             request = GetExerciseByIdRequest(exercise_id=exercise_id)
             response = await self.get_exercise_by_id_use_case.execute(request)
@@ -137,24 +116,12 @@ class ExerciseController:
             )
     
     async def get_exercise_details(self, exercise_id: str) -> dict:
-        """
-        Obtiene detalles completos de un ejercicio incluyendo relacionados.
-        
-        Args:
-            exercise_id: ID del ejercicio
-        
-        Returns:
-            dict: Detalles completos del ejercicio
-        
-        Raises:
-            HTTPException: Si no se encuentra o hay error
-        """
+        """Obtiene detalles completos de un ejercicio."""
         try:
             details = await self.get_exercise_details_use_case.execute(exercise_id)
             return details
             
         except ValueError as e:
-            # ValueError desde el use case indica que no se encontró
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(e)
@@ -166,18 +133,7 @@ class ExerciseController:
             )
     
     async def get_reference_features(self, exercise_id: str) -> dict:
-        """
-        Obtiene features precalculadas del audio de referencia.
-        
-        Args:
-            exercise_id: ID del ejercicio
-        
-        Returns:
-            dict: Features de referencia
-        
-        Raises:
-            HTTPException: Si no se encuentra o hay error
-        """
+        """Obtiene features precalculadas del audio de referencia."""
         try:
             request = GetReferenceFeaturesRequest(exercise_id=exercise_id)
             response = await self.get_reference_features_use_case.execute(request)
@@ -210,18 +166,7 @@ class ExerciseController:
             )
     
     async def get_features_for_comparison(self, exercise_id: str) -> dict:
-        """
-        Obtiene features optimizadas para comparación DTW.
-        
-        Args:
-            exercise_id: ID del ejercicio
-        
-        Returns:
-            dict: Features esenciales para comparación
-        
-        Raises:
-            HTTPException: Si no se encuentra o hay error
-        """
+        """Obtiene features optimizadas para comparación DTW."""
         try:
             features = await self.get_features_for_comparison_use_case.execute(exercise_id)
             
@@ -240,12 +185,57 @@ class ExerciseController:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error al obtener features: {str(e)}"
             )
+    
+    async def get_available_exercises(
+        self,
+        user_id: str,
+        category: Optional[ExerciseCategory],
+        include_locked: bool
+    ) -> dict:
+        """Obtiene ejercicios disponibles según progreso del usuario."""
+        try:
+            request = GetAvailableExercisesRequest(
+                user_id=user_id,
+                category=category,
+                include_locked=include_locked
+            )
+            
+            response = await self.get_available_exercises_use_case.execute(request)
+            
+            return {
+                "success": True,
+                "data": response.to_dict()
+            }
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al obtener ejercicios disponibles: {str(e)}"
+            )
+    
+    async def initialize_user_progress(self, user_id: str) -> dict:
+        """Inicializa el progreso de un nuevo usuario."""
+        try:
+            unlocked_exercises = await self.user_progress_repository.initialize_user_progress(user_id)
+            
+            return {
+                "success": True,
+                "data": {
+                    "user_id": user_id,
+                    "unlocked_exercises": unlocked_exercises,
+                    "message": f"Progreso inicializado: {len(unlocked_exercises)} ejercicios desbloqueados"
+                }
+            }
+            
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al inicializar progreso: {str(e)}"
+            )
 
 
 class ExerciseHealthController:
-    """
-    Controlador para endpoints de salud y monitoreo.
-    """
+    """Controlador para endpoints de salud y monitoreo."""
     
     def __init__(
         self,
@@ -256,17 +246,9 @@ class ExerciseHealthController:
         self.reference_features_repository = reference_features_repository
     
     async def health_check(self) -> dict:
-        """
-        Verifica el estado del módulo de ejercicios.
-        
-        Returns:
-            dict: Estado de salud
-        """
+        """Verifica el estado del módulo de ejercicios."""
         try:
-            # Contar ejercicios activos
             exercises_count = await self.exercise_repository.count(is_active=True)
-            
-            # Contar features cacheadas
             cached_features_count = await self.reference_features_repository.count_cached()
             
             return {
@@ -286,14 +268,8 @@ class ExerciseHealthController:
             }
     
     async def get_statistics(self) -> dict:
-        """
-        Obtiene estadísticas del módulo de ejercicios.
-        
-        Returns:
-            dict: Estadísticas
-        """
+        """Obtiene estadísticas del módulo de ejercicios."""
         try:
-            # Estadísticas por categoría
             from src.exercises.domain.models.exercise import ExerciseCategory
             
             stats_by_category = {}
@@ -304,10 +280,7 @@ class ExerciseHealthController:
                 )
                 stats_by_category[category.value] = count
             
-            # Total de ejercicios
             total = await self.exercise_repository.count(is_active=True)
-            
-            # Features cacheadas
             cached_count = await self.reference_features_repository.count_cached()
             
             return {
@@ -325,4 +298,3 @@ class ExerciseHealthController:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error al obtener estadísticas: {str(e)}"
             )
-
