@@ -1,25 +1,13 @@
 """
 ProcessAudioUseCase - Procesa audio del usuario y guarda attempt.
 
-Este use case NO calcula scores de ML. Solo:
-1. Valida calidad del audio
-2. Extrae features básicos
-3. Guarda attempt con status=PENDING_ANALYSIS
-4. Guarda features en MongoDB
-
-Los scores se calcularán después por el ML Analysis Service.
+IMPORTANTE: Convierte TODOS los numpy types a Python types antes de retornar el Response.
 """
 
-import time
 from dataclasses import dataclass
-from typing import Optional, Dict
-from src.audio_processing.domain.models.attempt import Attempt, AttemptStatus
-from src.audio_processing.domain.models.audio_features import AudioFeatures
-from src.audio_processing.domain.repositories.attempt_repository import AttemptRepository
-from src.audio_processing.domain.repositories.audio_features_repository import AudioFeaturesRepository
+from typing import Dict
+import numpy as np
 from src.audio_processing.application.services.audio_processing_service import AudioProcessingService
-from src.audio_processing.application.services.validation_service import ValidationService
-from src.audio_processing.application.use_cases.validate_audio_quality_use_case import ValidateAudioQualityRequest, ValidateAudioQualityResponse
 
 
 @dataclass
@@ -57,25 +45,50 @@ class ProcessAudioResponse:
 class ProcessAudioUseCase:
     """
     Caso de uso: Procesar audio del usuario.
-    
-    Flujo:
-    1. Valida calidad del audio
-    2. Extrae features acústicos
-    3. Guarda attempt con status=PENDING_ANALYSIS (SIN scores)
-    4. Guarda features en MongoDB
-    5. Retorna métricas básicas
-    
-    Nota: Los scores (pronunciation, fluency, rhythm) se calcularán
-    después por el ML Analysis Service.
     """
     
-    def __init__(
-        self,
-        audio_processing_service: AudioProcessingService,
-        validation_service: ValidationService
-    ):
+    def __init__(self, audio_processing_service: AudioProcessingService):
         self.audio_processing_service = audio_processing_service
-        self.validation_service = validation_service
+    
+    @staticmethod
+    def _to_python_type(value):
+        """
+        Convierte cualquier tipo de numpy a tipo nativo de Python.
+        Esto es crítico para que FastAPI pueda serializar a JSON.
+        """
+        if value is None:
+            return None
+        
+        # Numpy bool
+        if isinstance(value, (np.bool_, bool)):
+            return bool(value)
+        
+        # Numpy float
+        if isinstance(value, (np.floating, np.float64, np.float32, np.float16)):
+            return float(value)
+        
+        # Numpy int
+        if isinstance(value, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+            return int(value)
+        
+        # Numpy array
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        
+        # Si ya es un tipo nativo, retornarlo tal cual
+        return value
+    
+    def _convert_dict_values(self, d: dict) -> dict:
+        """Convierte todos los valores de un diccionario a tipos nativos de Python"""
+        result = {}
+        for key, value in d.items():
+            if isinstance(value, dict):
+                result[key] = self._convert_dict_values(value)
+            elif isinstance(value, list):
+                result[key] = [self._to_python_type(v) for v in value]
+            else:
+                result[key] = self._to_python_type(value)
+        return result
     
     async def execute(self, request: ProcessAudioRequest) -> ProcessAudioResponse:
         """
@@ -90,91 +103,41 @@ class ProcessAudioUseCase:
         Raises:
             ValueError: Si el audio no pasa las validaciones
         """
-        start_time = time.time()
-        
-        #1. Validar ejercicio existe
-        await self.validation_service.validate_exercise_exists(request.exercise_id)
-        
-        #2. Validar calidad del audio
-        validate_audio_quality_request = ValidateAudioQualityRequest(
-            audio_base64=request.audio_base64
-        )
-        validate_audio_quality_response = await self.audio_processing_service.validate_audio_(
-            validate_audio_quality_request
-        )
-        quality_check = validate_audio_quality_response.quality_check(
-            request.audio_base64
-        )
-        
-        if not quality_check.is_valid:
-            raise ValueError(
-                f"Audio rechazado por baja calidad: {quality_check.rejection_reason}"
-            )
-        
-        # 3. Extraer features completos
-        audio_features = await self.audio_processing_service.process_audio_complete(
+        # Delegar TODO el procesamiento al Service
+        attempt, audio_features, quality_check = await self.audio_processing_service.process_audio_complete(
             audio_base64=request.audio_base64,
-            exercise_id=request.exercise_id,
-            user_id=request.user_id
-        )
-        
-        # 4. Guardar features en MongoDB
-        features_doc_id = await self.audio_processing_service.save_audio_features(
-            audio_features
-        )
-        
-        # 5. Calcular tiempo de procesamiento
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        
-        # 6. Crear Attempt (SIN scores de ML)
-        attempt = Attempt.create_new(
             user_id=request.user_id,
-            exercise_id=request.exercise_id,
-            audio_quality_score=quality_check.quality_score,
-            audio_snr_db=quality_check.snr_db,
-            has_background_noise=quality_check.has_background_noise,
-            has_clipping=quality_check.has_clipping,
-            total_duration_seconds=quality_check.duration_seconds,
-            speech_rate=audio_features.speech_rate if hasattr(audio_features, 'speech_rate') else None,
-            articulation_rate=None,  # Calcular si es necesario
-            pause_count=audio_features.pause_count if hasattr(audio_features, 'pause_count') else None,
-            features_doc_id=features_doc_id,
-            processing_time_ms=processing_time_ms
+            exercise_id=request.exercise_id
         )
         
-        # 7. Guardar attempt en PostgreSQL
-        await self.audio_processing_service.save_attempt(attempt)
-        
-        # 8. Construir respuesta
+        # ✅ Construir respuesta convirtiendo TODOS los valores a tipos nativos de Python
         return ProcessAudioResponse(
-            attempt_id=attempt.id,
+            attempt_id=str(attempt.id),  # Asegurar que sea string
             status="success",
             quality_check={
-                # "is_valid": quality_check.is_valid,
-                # "quality_score": float(quality_check.quality_score),
-                # "snr_db": float(quality_check.snr_db) if quality_check.snr_db else None,
-                # "has_background_noise": quality_check.has_background_noise,
-                # "has_clipping": quality_check.has_clipping,
-                # "duration_seconds": float(quality_check.duration_seconds),
-                # "recommendation": quality_check.get_recommendation()
+                "is_valid": bool(quality_check.is_valid),  # ✅ Convertir a bool nativo
+                "quality_score": float(quality_check.quality_score),  # ✅ Convertir a float nativo
+                "snr_db": float(quality_check.snr_db) if quality_check.snr_db is not None else None,
+                "has_background_noise": bool(quality_check.has_background_noise),  # ✅ Convertir
+                "has_clipping": bool(quality_check.has_clipping),  # ✅ Convertir
+                "duration_seconds": float(quality_check.duration_seconds),
+                "recommendation": str(quality_check.get_recommendation())
             },
             basic_metrics={
-                # "duration_seconds": float(quality_check.duration_seconds),
-                "speech_rate": float(audio_features.speech_rate) if hasattr(audio_features, 'speech_rate') else None,
-                "pause_count": audio_features.pause_count if hasattr(audio_features, 'pause_count') else 0,
-                "energy_mean": float(audio_features.energy_mean) if hasattr(audio_features, 'energy_mean') else None
+                "duration_seconds": float(audio_features.duration_seconds),
+                "speech_rate": float(audio_features.rhythm.speech_rate) if audio_features.rhythm else None,
+                "pause_count": int(audio_features.rhythm.pause_count) if audio_features.rhythm else 0,
+                "articulation_rate": float(audio_features.rhythm.articulation_rate) if audio_features.rhythm else None
             },
             features_stored={
-                "features_doc_id": features_doc_id,
-                "mongodb_collection": "audio_features"
+                "features_doc_id": str(attempt.features_doc_id),
+                "mongodb_collection": "audio_features",
+                "phoneme_count": int(audio_features.phoneme_count) if audio_features.phoneme_count else 0
             },
             processing_info={
-                "processing_time_ms": processing_time_ms,
-                "processing_version": "v1.0",
-                "status": attempt.status.value
+                "processing_time_ms": int(attempt.processing_time_ms) if attempt.processing_time_ms else 0,
+                "processing_version": str(audio_features.processing_version),
+                "status": str(attempt.status.value)
             },
-            message=(
-                "Audio procesado exitosamente. "
-                "Esperando análisis ML para scores finales."
-            )
+            message="Audio procesado exitosamente. Esperando análisis ML para scores finales."
         )
