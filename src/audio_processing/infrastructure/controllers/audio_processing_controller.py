@@ -131,7 +131,7 @@ class AudioProcessingController:
             # Ejecutar use case
             response = await self.validate_audio_use_case.execute(request)
             
-            logger.info(f"✅ Validación completada: valid={response.is_valid}")
+            logger.info(f"✅ Validación completada: valid={response.quality_check.is_valid}")
             
             return {
                 "success": True,

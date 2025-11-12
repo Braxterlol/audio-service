@@ -145,7 +145,6 @@ async def get_validation_service(
 
 async def get_process_audio_use_case(
     audio_processing_service = Depends(get_audio_processing_service),
-    validation_service = Depends(get_validation_service)
 ):
     """Proporciona el caso de uso ProcessAudio"""
     # Lazy import
@@ -154,7 +153,6 @@ async def get_process_audio_use_case(
     )
     return ProcessAudioUseCase(
         audio_processing_service=audio_processing_service,
-        validation_service=validation_service
     )
 
 

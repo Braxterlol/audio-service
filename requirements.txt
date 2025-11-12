@@ -26,4 +26,4 @@ requests==2.31.0
 
 noisereduce==3.0.3
 fastdtw==0.3.4
-ffmpeg-python==8.0_2 
+ffmpeg-python

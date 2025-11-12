@@ -7,6 +7,7 @@ Implementa el puerto AttemptRepository usando PostgreSQL con asyncpg.
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import asyncpg
+import numpy as np
 from src.audio_processing.domain.models.attempt import Attempt, AttemptStatus
 from src.audio_processing.domain.repositories.attempt_repository import AttemptRepository
 
@@ -23,94 +24,147 @@ class AttemptRepositoryImpl(AttemptRepository):
         """
         self.db_pool = db_pool
     
-    async def save(self, attempt: Attempt) -> Attempt:
-        """Guarda o actualiza un intento"""
-        # Intentar actualizar primero
-        update_query = """
-            UPDATE attempts
-            SET status = $2,
-                audio_quality_score = $3,
-                audio_snr_db = $4,
-                has_background_noise = $5,
-                has_clipping = $6,
-                total_duration_seconds = $7,
-                speech_rate = $8,
-                articulation_rate = $9,
-                pause_count = $10,
-                overall_score = $11,
-                pronunciation_score = $12,
-                fluency_score = $13,
-                rhythm_score = $14,
-                error_count = $15,
-                features_doc_id = $16,
-                processing_time_ms = $17,
-                analyzed_at = $18
-            WHERE id = $1
-            RETURNING id
+    @staticmethod
+    def _convert_to_python_type(value):
         """
+        Convierte tipos de numpy a tipos nativos de Python.
         
-        insert_query = """
-            INSERT INTO attempts (
-                id, user_id, exercise_id, attempted_at, status,
-                audio_quality_score, audio_snr_db, has_background_noise, has_clipping,
-                total_duration_seconds, speech_rate, articulation_rate, pause_count,
-                overall_score, pronunciation_score, fluency_score, rhythm_score,
-                error_count, features_doc_id, processing_time_ms, analyzed_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-            RETURNING id
+        asyncpg no puede serializar numpy.bool_, numpy.float64, etc.
         """
+        if value is None:
+            return None
+        
+        # Convertir numpy bool a Python bool
+        if isinstance(value, (np.bool_, bool)):
+            return bool(value)
+        
+        # Convertir numpy float a Python float
+        if isinstance(value, (np.floating, np.float64, np.float32)):
+            return float(value)
+        
+        # Convertir numpy int a Python int
+        if isinstance(value, (np.integer, np.int64, np.int32)):
+            return int(value)
+        
+        # Si ya es un tipo nativo de Python, retornarlo tal cual
+        return value
+    
+    async def save(self, attempt: Attempt) -> Attempt:
+        """
+        Guarda o actualiza un intento.
+        
+        IMPORTANTE: 
+        - Convierte numpy types a Python types
+        - Si attempt.id es None, hace INSERT y Postgres genera el ID
+        - Si attempt.id existe, hace UPDATE
+        - Retorna el Attempt con el ID generado/actualizado
+        """
+        # Convertir todos los valores a tipos nativos de Python
+        audio_quality_score = self._convert_to_python_type(attempt.audio_quality_score)
+        audio_snr_db = self._convert_to_python_type(attempt.audio_snr_db)
+        has_background_noise = self._convert_to_python_type(attempt.has_background_noise)
+        has_clipping = self._convert_to_python_type(attempt.has_clipping)
+        total_duration_seconds = self._convert_to_python_type(attempt.total_duration_seconds)
+        speech_rate = self._convert_to_python_type(attempt.speech_rate)
+        articulation_rate = self._convert_to_python_type(attempt.articulation_rate)
+        pause_count = self._convert_to_python_type(attempt.pause_count)
+        overall_score = self._convert_to_python_type(attempt.overall_score)
+        pronunciation_score = self._convert_to_python_type(attempt.pronunciation_score)
+        fluency_score = self._convert_to_python_type(attempt.fluency_score)
+        rhythm_score = self._convert_to_python_type(attempt.rhythm_score)
+        error_count = self._convert_to_python_type(attempt.error_count)
+        processing_time_ms = self._convert_to_python_type(attempt.processing_time_ms)
         
         async with self.db_pool.acquire() as conn:
-            # Intentar actualizar
+            # Si tiene ID, intentar UPDATE
+            if attempt.id is not None:
+                update_query = """
+                    UPDATE attempts
+                    SET status = $2,
+                        audio_quality_score = $3,
+                        audio_snr_db = $4,
+                        has_background_noise = $5,
+                        has_clipping = $6,
+                        total_duration_seconds = $7,
+                        speech_rate = $8,
+                        articulation_rate = $9,
+                        pause_count = $10,
+                        overall_score = $11,
+                        pronunciation_score = $12,
+                        fluency_score = $13,
+                        rhythm_score = $14,
+                        error_count = $15,
+                        features_doc_id = $16,
+                        processing_time_ms = $17,
+                        analyzed_at = $18
+                    WHERE id = $1
+                    RETURNING id
+                """
+                
+                result = await conn.fetchrow(
+                    update_query,
+                    attempt.id,
+                    attempt.status.value,
+                    audio_quality_score,
+                    audio_snr_db,
+                    has_background_noise,
+                    has_clipping,
+                    total_duration_seconds,
+                    speech_rate,
+                    articulation_rate,
+                    pause_count,
+                    overall_score,
+                    pronunciation_score,
+                    fluency_score,
+                    rhythm_score,
+                    error_count,
+                    attempt.features_doc_id,
+                    processing_time_ms,
+                    attempt.analyzed_at
+                )
+                
+                if result:
+                    return attempt
+            
+            # Si no tiene ID o el UPDATE falló, hacer INSERT
+            insert_query = """
+                INSERT INTO attempts (
+                    user_id, exercise_id, attempted_at, status,
+                    audio_quality_score, audio_snr_db, has_background_noise, has_clipping,
+                    total_duration_seconds, speech_rate, articulation_rate, pause_count,
+                    overall_score, pronunciation_score, fluency_score, rhythm_score,
+                    error_count, features_doc_id, processing_time_ms, analyzed_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                RETURNING id
+            """
+            
             result = await conn.fetchrow(
-                update_query,
-                attempt.id,
+                insert_query,
+                attempt.user_id,
+                attempt.exercise_id,
+                attempt.attempted_at,
                 attempt.status.value,
-                attempt.audio_quality_score,
-                attempt.audio_snr_db,
-                attempt.has_background_noise,
-                attempt.has_clipping,
-                attempt.total_duration_seconds,
-                attempt.speech_rate,
-                attempt.articulation_rate,
-                attempt.pause_count,
-                attempt.overall_score,
-                attempt.pronunciation_score,
-                attempt.fluency_score,
-                attempt.rhythm_score,
-                attempt.error_count,
+                audio_quality_score,
+                audio_snr_db,
+                has_background_noise,
+                has_clipping,
+                total_duration_seconds,
+                speech_rate,
+                articulation_rate,
+                pause_count,
+                overall_score,
+                pronunciation_score,
+                fluency_score,
+                rhythm_score,
+                error_count,
                 attempt.features_doc_id,
-                attempt.processing_time_ms,
+                processing_time_ms,
                 attempt.analyzed_at
             )
             
-            # Si no existía, insertar
-            if not result:
-                await conn.fetchrow(
-                    insert_query,
-                    attempt.id,
-                    attempt.user_id,
-                    attempt.exercise_id,
-                    attempt.attempted_at,
-                    attempt.status.value,
-                    attempt.audio_quality_score,
-                    attempt.audio_snr_db,
-                    attempt.has_background_noise,
-                    attempt.has_clipping,
-                    attempt.total_duration_seconds,
-                    attempt.speech_rate,
-                    attempt.articulation_rate,
-                    attempt.pause_count,
-                    attempt.overall_score,
-                    attempt.pronunciation_score,
-                    attempt.fluency_score,
-                    attempt.rhythm_score,
-                    attempt.error_count,
-                    attempt.features_doc_id,
-                    attempt.processing_time_ms,
-                    attempt.analyzed_at
-                )
+            # Asignar el ID generado por Postgres
+            attempt.id = str(result['id'])
             
             return attempt
     
