@@ -83,8 +83,9 @@ class AudioProcessingService:
         
         if not quality_check.is_valid:
             # Crear intento fallido
+            import uuid as uuid_lib
             attempt = Attempt(
-                id=None,
+                id=str(uuid_lib.uuid4()),  # Generar UUID como string
                 user_id=user_id,
                 exercise_id=exercise_id,
                 attempted_at=datetime.utcnow(),
@@ -121,8 +122,9 @@ class AudioProcessingService:
         processing_time = int((datetime.utcnow() - start_time).total_seconds() * 1000)
         
         # 6. Crear Attempt (PENDING_ANALYSIS)
+        import uuid as uuid_lib
         attempt = Attempt(
-            id=None,
+            id=str(uuid_lib.uuid4()),  # Generar UUID como string
             user_id=user_id,
             exercise_id=exercise_id,
             attempted_at=start_time,
@@ -180,9 +182,7 @@ class AudioProcessingService:
             
         except Exception as e:
             logger.error(f"❌ Error llamando a ML Service: {e}")
-            # Marcar como fallido pero no bloquear la respuesta
-            attempt.status = AttemptStatus.FAILED
-            await self.attempt_repository.save(attempt)
+            # Mantener como PENDING_ANALYSIS (no hay estado FAILED)
             # No lanzamos excepción para que el usuario al menos vea el audio procesado
         
         # 13. Retornar resultado completo
