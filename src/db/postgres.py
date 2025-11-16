@@ -19,18 +19,23 @@ class PostgresDatabase:
         """
         Crea el pool de conexiones a PostgreSQL.
         """
-        if self.pool is None:
-            self.pool = await asyncpg.create_pool(
-                host=settings.POSTGRES_HOST,
-                port=settings.POSTGRES_PORT,
-                database=settings.POSTGRES_DB,
-                user=settings.POSTGRES_USER,
-                password=settings.POSTGRES_PASSWORD,
-                min_size=settings.POSTGRES_MIN_POOL_SIZE,
-                max_size=settings.POSTGRES_MAX_POOL_SIZE,
-                command_timeout=60
-            )
-            print(f"✅ PostgreSQL pool creado: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
+        # Cerrar pool existente si hay (para forzar refresh de metadata)
+        if self.pool is not None:
+            await self.pool.close()
+            self.pool = None
+            print("🔄 Pool anterior cerrado, recreando...")
+        
+        self.pool = await asyncpg.create_pool(
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+            database=settings.POSTGRES_DB,
+            user=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD,
+            min_size=settings.POSTGRES_MIN_POOL_SIZE,
+            max_size=settings.POSTGRES_MAX_POOL_SIZE,
+            command_timeout=60
+        )
+        print(f"✅ PostgreSQL pool creado: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
     
     async def disconnect(self):
         """

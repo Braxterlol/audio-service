@@ -139,35 +139,35 @@ async def get_available_exercises(
     )
 
 
-@exercises_router.post(
-    "/initialize-progress",
-    summary="Inicializar progreso de un nuevo usuario",
-    description="""
-    Inicializa el progreso de un usuario desbloqueando el primer ejercicio
-    de cada categoría.
+# @exercises_router.post(
+#     "/initialize-progress",
+#     summary="Inicializar progreso de un nuevo usuario",
+#     description="""
+#     Inicializa el progreso de un usuario desbloqueando el primer ejercicio
+#     de cada categoría.
     
-    Este endpoint se llama automáticamente la primera vez que el usuario
-    accede a /available, pero también puede llamarse manualmente si es necesario.
-    """,
-    status_code=200
-)
-async def initialize_user_progress(
-    current_user: dict = Depends(get_current_user),
-    controller: ExerciseController = Depends(get_exercise_controller)
-):
-    """
-    Endpoint: Inicializar progreso del usuario.
+#     Este endpoint se llama automáticamente la primera vez que el usuario
+#     accede a /available, pero también puede llamarse manualmente si es necesario.
+#     """,
+#     status_code=200
+# )
+# async def initialize_user_progress(
+#     current_user: dict = Depends(get_current_user),
+#     controller: ExerciseController = Depends(get_exercise_controller)
+# ):
+#     """
+#     Endpoint: Inicializar progreso del usuario.
     
-    Args:
-        current_user: Usuario autenticado
-        controller: Controller
+#     Args:
+#         current_user: Usuario autenticado
+#         controller: Controller
     
-    Returns:
-        Lista de ejercicios desbloqueados
-    """
-    user_id = current_user["user_id"]
+#     Returns:
+#         Lista de ejercicios desbloqueados
+#     """
+#     user_id = current_user["user_id"]
     
-    return await controller.initialize_user_progress(user_id)
+#     return await controller.initialize_user_progress(user_id)
 
 
 @exercises_router.get(

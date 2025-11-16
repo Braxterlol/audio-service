@@ -129,18 +129,19 @@ class AttemptRepositoryImpl(AttemptRepository):
             # Si no tiene ID o el UPDATE falló, hacer INSERT
             insert_query = """
                 INSERT INTO attempts (
-                    user_id, exercise_id, attempted_at, status,
+                    id, user_id, exercise_id, attempted_at, status,
                     audio_quality_score, audio_snr_db, has_background_noise, has_clipping,
                     total_duration_seconds, speech_rate, articulation_rate, pause_count,
                     overall_score, pronunciation_score, fluency_score, rhythm_score,
                     error_count, features_doc_id, processing_time_ms, analyzed_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                 RETURNING id
             """
             
             result = await conn.fetchrow(
                 insert_query,
+                attempt.id,  # ← Incluir el ID
                 attempt.user_id,
                 attempt.exercise_id,
                 attempt.attempted_at,

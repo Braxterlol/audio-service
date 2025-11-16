@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 
 from src.shared.config import settings
 
+from src.exercise_progression.infrastructure.routes.exercise_routes import exercise_router
+
 # Importar gestores de base de datos
 from src.db import postgres_db, mongo_db
 
@@ -199,6 +201,7 @@ app.include_router(
     prefix="/api/v1"
 )
 
+app.include_router(exercise_router, prefix="/api/v1/progression")
 
 # ========================================
 # EJECUCIÓN
