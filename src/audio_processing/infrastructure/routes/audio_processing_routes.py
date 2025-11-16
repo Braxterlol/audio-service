@@ -31,6 +31,11 @@ class ProcessAudioRequestSchema(BaseModel):
         description="ID del ejercicio (ej: 'vocal_a_1')",
         pattern="^[a-z0-9_]+$"
     )
+    reference_text: Optional[str] = Field(  # ← AGREGAR
+        None,
+        description="Texto de referencia para evaluación de pronunciación",
+        max_length=500
+    )
     metadata: Optional[dict] = Field(
         None,
         description="Información adicional del dispositivo"
@@ -40,7 +45,8 @@ class ProcessAudioRequestSchema(BaseModel):
         json_schema_extra = {
             "example": {
                 "audio_base64": "UklGRiQAAABXQVZFZm10...",
-                "exercise_id": "vocal_a_1",
+                "exercise_id": "fonema_rr_vibrante_2",
+                "reference_text": "carro",  # ← AGREGAR
                 "metadata": {
                     "device": "iPhone 13",
                     "app_version": "1.0.0",
@@ -48,7 +54,6 @@ class ProcessAudioRequestSchema(BaseModel):
                 }
             }
         }
-
 
 class ValidateAudioRequestSchema(BaseModel):
     """Schema para validar calidad de audio"""
@@ -122,12 +127,14 @@ async def process_audio(
         Resultado del procesamiento
     """
     user_id = current_user["user_id"]
+    reference_text=request.reference_text
     
     return await controller.process_audio(
         audio_base64=request.audio_base64,
         exercise_id=request.exercise_id,
         user_id=user_id,
-        metadata=request.metadata
+        metadata=request.metadata,
+        reference_text=reference_text
     )
 
 
