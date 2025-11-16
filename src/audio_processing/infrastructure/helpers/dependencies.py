@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 from fastapi import Depends
 from motor.motor_asyncio import AsyncIOMotorClient
 import asyncpg
-
+from src.shared.config import settings
 
 # ========================================
 # DATABASE CONNECTIONS
@@ -120,7 +120,9 @@ async def get_audio_processing_service(
     )
     return AudioProcessingService(
         attempt_repository=attempt_repo,
-        audio_features_repository=audio_features_repo
+        audio_features_repository=audio_features_repo,
+        ml_service_url=settings.ML_SERVICE_URL,        # ← PASAR
+        ml_service_api_key=settings.ML_SERVICE_API_KEY # ← PASAR
     )
 
 

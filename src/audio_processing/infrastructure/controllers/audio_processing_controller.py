@@ -35,7 +35,8 @@ class AudioProcessingController:
         user_id: str,
         exercise_id: str,
         audio_base64: str,
-        metadata: Dict
+        metadata: Dict,
+        reference_text: Optional[str] = None
     ) -> dict:
         """
         Procesa audio del usuario.
@@ -68,17 +69,18 @@ class AudioProcessingController:
                 user_id=user_id,
                 exercise_id=exercise_id,
                 audio_base64=audio_base64,
-                metadata=metadata
+                metadata=metadata,
+                reference_text=reference_text
             )
             
             # Ejecutar use case (SIN argumentos extra como daily_limit)
             response = await self.process_audio_use_case.execute(request)
             
-            logger.info(f"✅ Audio procesado: attempt_id={response.attempt_id}")
+            logger.info(f"✅ Audio procesado: attempt_id={response['attempt_id']}")
             
             return {
                 "success": True,
-                "data": response.to_dict()
+                "data": response
             }
             
         except ValueError as e:

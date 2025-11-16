@@ -53,7 +53,9 @@ class Settings(BaseSettings):
     # --- CORS ---
     # No está en tu .env, usará el valor por defecto
     CORS_ORIGINS: List[str] = ["*"]
-    
+    # ML Service
+    ML_SERVICE_URL: str = "http://localhost:8002"
+    ML_SERVICE_API_KEY: str = "secret_key_12345"
     # --- Configuración de Pydantic (LA SOLUCIÓN) ---
     model_config = SettingsConfigDict(
         env_file=".env",
