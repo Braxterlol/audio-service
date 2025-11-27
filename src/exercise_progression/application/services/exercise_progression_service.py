@@ -34,11 +34,16 @@ class ExerciseProgressionService:
         # 5. Calcular estadísticas totales
         total_completed = sum(1 for p in progress_list if p.is_completed())
         total_stars = sum(p.calculate_stars() for p in progress_list if p.is_completed())
+        max_stars = len(exercises) * 3  
+        completion_percentage = round((total_completed / len(exercises) * 100) if exercises else 0, 2)  # ← AGREGAR
+        
         
         return {
             "total_exercises": len(exercises),
-            "completed_exercises": total_completed,
+            "completed_count": total_completed,
             "total_stars": total_stars,
+            "max_stars": max_stars,  # ← AGREGAR
+            "completion_percentage": completion_percentage,  # ← AGREGAR
             "current_exercise_index": current_index,
             "categories": categories
         }
