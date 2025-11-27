@@ -155,6 +155,7 @@ class AudioProcessingService:
         await self.attempt_repository.save(attempt)
         
         # 11. 🔥 LLAMAR A ML SERVICE
+        ml_response = None
         try:
             logger.info(f"Llamando a ML Service para attempt: {attempt.id}")
             
@@ -210,6 +211,17 @@ class AudioProcessingService:
             "attempted_at": attempt.attempted_at.isoformat(),
             "analyzed_at": attempt.analyzed_at.isoformat() if attempt.analyzed_at else None
         }
+        
+        # ✅ AGREGAR FEEDBACK Y CONFIDENCE DEL ML SERVICE SI EXISTEN
+        if ml_response:
+            if "feedback" in ml_response:
+                result["feedback"] = ml_response["feedback"]
+            if "confidence" in ml_response:
+                result["confidence"] = ml_response["confidence"]
+            if "model_versions" in ml_response:
+                result["model_versions"] = ml_response["model_versions"]
+            if "processing_info" in ml_response:
+                result["processing_info"] = ml_response["processing_info"]
 
         # Limpiar cualquier tipo numpy que quede
         return self._clean_numpy_types(result)
