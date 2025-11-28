@@ -181,8 +181,16 @@ class AudioProcessingService:
             
             logger.info(f"✅ Attempt {attempt.id} completado con scores")
             
+        except httpx.ConnectError as e:
+            logger.error(f"❌ Error de conexión a ML Service ({self.ml_service_url}): No se pudo conectar. ¿El servicio está corriendo?")
+            logger.error(f"   Detalles: {str(e)}")
+            # Mantener como PENDING_ANALYSIS (no hay estado FAILED)
+            # No lanzamos excepción para que el usuario al menos vea el audio procesado
+        except httpx.TimeoutException as e:
+            logger.error(f"❌ Timeout al llamar a ML Service: {str(e)}")
         except Exception as e:
-            logger.error(f"❌ Error llamando a ML Service: {e}")
+            logger.error(f"❌ Error inesperado llamando a ML Service: {type(e).__name__}: {str(e)}")
+            logger.exception("Traceback completo:")
             # Mantener como PENDING_ANALYSIS (no hay estado FAILED)
             # No lanzamos excepción para que el usuario al menos vea el audio procesado
         
@@ -287,45 +295,114 @@ class AudioProcessingService:
             "Content-Type": "application/json"
         }
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{self.ml_service_url}/api/v1/ml/analyze",
-                json=payload,
-                headers=headers
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                raise Exception(f"ML Service error ({response.status_code}): {response.text}")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                logger.info(f"Enviando request a {self.ml_service_url}/api/v1/ml/analyze")
+                response = await client.post(
+                    f"{self.ml_service_url}/api/v1/ml/analyze",
+                    json=payload,
+                    headers=headers
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"✅ ML Service respondió exitosamente")
+                    return response.json()
+                else:
+                    error_msg = f"ML Service error ({response.status_code}): {response.text}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+        except httpx.ConnectError:
+            logger.error(f"No se pudo conectar a ML Service en {self.ml_service_url}")
+            raise
+        except httpx.TimeoutException:
+            logger.error(f"Timeout esperando respuesta de ML Service")
+            raise
+        except Exception as e:
+            logger.error(f"Error en request a ML Service: {type(e).__name__}: {str(e)}")
+            raise
     
     def _audio_features_to_dict(self, audio_features: AudioFeatures) -> Dict:
-        """Convierte AudioFeatures a dict para el ML Service."""
-        prosody_dict = None
-        if audio_features.prosody:
-            prosody_dict = {
-                "jitter": audio_features.prosody.jitter,
-                "shimmer": audio_features.prosody.shimmer,
-                "f0_stats": audio_features.prosody.f0_stats,  # Ya es dict
-                "energy_stats": audio_features.prosody.energy_stats  # Ya es dict
-            }
-        rhythm_dict = None
-        if audio_features.rhythm:
-            rhythm_dict = {
-                "speech_rate": audio_features.rhythm.speech_rate,
-                "articulation_rate": audio_features.rhythm.articulation_rate,
-                "pause_count": audio_features.rhythm.pause_count,
-                "pause_durations_ms": audio_features.rhythm.pause_durations_ms,
-                "speaking_time_ms": audio_features.rhythm.speaking_time_ms,
-                "total_duration_ms": audio_features.rhythm.total_duration_ms
-            }
+        """Convierte AudioFeatures a dict para el ML Service con TODAS las features calculadas."""
         
+        # Extraer valores base de prosody
+        jitter = audio_features.prosody.jitter if audio_features.prosody else 0.0
+        shimmer = audio_features.prosody.shimmer if audio_features.prosody else 0.0
+        f0_std = audio_features.prosody.f0_stats.get('std', 0.0) if audio_features.prosody else 0.0
+        f0_range = audio_features.prosody.f0_stats.get('range', 0.0) if audio_features.prosody else 0.0
+        energy_std = audio_features.prosody.energy_stats.get('std', 0.0) if audio_features.prosody else 0.0
+        
+        # Extraer valores base de rhythm
+        speech_rate = audio_features.rhythm.speech_rate if audio_features.rhythm else 0.0
+        articulation_rate = audio_features.rhythm.articulation_rate if audio_features.rhythm else 0.0
+        pause_count = audio_features.rhythm.pause_count if audio_features.rhythm else 0
+        pause_durations_ms = audio_features.rhythm.pause_durations_ms if audio_features.rhythm else []
+        speaking_time_ms = audio_features.rhythm.speaking_time_ms if audio_features.rhythm else 0
+        total_duration_ms = audio_features.rhythm.total_duration_ms if audio_features.rhythm else 0
+        duration_seconds = audio_features.duration_seconds
+        
+        # CALCULAR FEATURES DERIVADAS
+        
+        # 1. Pause duration stats
+        import numpy as np
+        if len(pause_durations_ms) > 0:
+            pause_duration_mean = float(np.mean(pause_durations_ms))
+            pause_duration_std = float(np.std(pause_durations_ms))
+            average_pause_duration = pause_duration_mean / 1000.0  # convertir a segundos
+        else:
+            pause_duration_mean = 0.0
+            pause_duration_std = 0.0
+            average_pause_duration = 0.0
+        
+        # 2. Speaking time ratio
+        if total_duration_ms > 0:
+            speaking_time_ratio = speaking_time_ms / total_duration_ms
+        else:
+            speaking_time_ratio = 0.0
+        
+        # 3. Pause density (pausas por segundo)
+        if duration_seconds > 0:
+            pause_density = pause_count / duration_seconds
+        else:
+            pause_density = 0.0
+        
+        # 4. Pause pattern regularity (coeficiente de variación de pausas)
+        if pause_duration_mean > 0 and pause_duration_std > 0:
+            pause_pattern_regularity = pause_duration_std / pause_duration_mean
+        else:
+            pause_pattern_regularity = 0.0
+        
+        # 5. Speech rate normalized (normalizado por duración)
+        speech_rate_normalized = speech_rate
+        articulation_rate_normalized = articulation_rate
+        
+        # Construir el dict con TODAS las features que el ML Service espera
         return {
-            "prosody": prosody_dict,
-            "rhythm": rhythm_dict,
-            "duration_seconds": audio_features.duration_seconds
+            "attempt_id": audio_features.attempt_id,
+            
+            # Features para fluidez (11 features)
+            "jitter": float(jitter),
+            "shimmer": float(shimmer),
+            "pause_count": int(pause_count),
+            "pause_duration_mean": float(pause_duration_mean),
+            "pause_duration_std": float(pause_duration_std),
+            "speaking_time_ratio": float(speaking_time_ratio),
+            "f0_std": float(f0_std),
+            "f0_range": float(f0_range),
+            "energy_std": float(energy_std),
+            "speech_rate_normalized": float(speech_rate_normalized),
+            "articulation_rate_normalized": float(articulation_rate_normalized),
+            
+            # Features para ritmo (9 features)
+            "speech_rate": float(speech_rate),
+            "articulation_rate": float(articulation_rate),
+            "pause_density": float(pause_density),
+            "average_pause_duration": float(average_pause_duration),
+            "duration_seconds": float(duration_seconds),
+            "pause_pattern_regularity": float(pause_pattern_regularity),
+            
+            # Audio base64 para Azure (opcional)
+            "audio_base64": None  # Se pasa por separado en el payload
         }
-
     
     async def validate_audio_only(
         self,
